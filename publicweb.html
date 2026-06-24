@@ -1,1 +1,335 @@
 
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Laura – Groq AI Companion v5</title>
+  <style>
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #2b0038, #000);
+      color: #fff;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100vh;
+      padding-top: 20px;
+    }
+
+    #avatarContainer {
+      width: 320px;
+      height: 320px;
+      position: relative;
+    }
+
+    #face {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background-image: url("https://i.imgur.com/7yUVEeT.png"); /* your Laura image later */
+      background-size: cover;
+      background-position: center;
+      animation: breathe 4s infinite ease-in-out;
+      box-shadow: 0 0 40px rgba(255, 77, 166, 0.4);
+    }
+
+    @keyframes breathe {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.015); }
+      100% { transform: scale(1); }
+    }
+
+    #eyes {
+      position: absolute;
+      top: 110px;
+      left: 95px;
+      width: 130px;
+      height: 40px;
+      background-image: url("https://i.imgur.com/3j7Q2yX.png");
+      background-size: cover;
+      animation: blink 6s infinite;
+    }
+
+    @keyframes blink {
+      0%, 97%, 100% { transform: scaleY(1); }
+      98% { transform: scaleY(0.1); }
+    }
+
+    #mouth {
+      position: absolute;
+      top: 200px;
+      left: 135px;
+      width: 60px;
+      height: 30px;
+      background-image: url("https://i.imgur.com/1p8xG3c.png");
+      background-size: cover;
+    }
+
+    .talking {
+      animation: talk 0.12s infinite alternate;
+    }
+
+    @keyframes talk {
+      0% { transform: scaleY(1); }
+      100% { transform: scaleY(0.6); }
+    }
+
+    #panel {
+      margin-top: 15px;
+      width: 90%;
+      max-width: 650px;
+      background: rgba(10, 10, 20, 0.9);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 0 25px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    #chatLog {
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 15px;
+    }
+
+    .msg {
+      margin-bottom: 6px;
+    }
+
+    .user {
+      color: #9fd4ff;
+    }
+
+    .laura {
+      color: #ffb3dd;
+    }
+
+    #typing {
+      font-size: 13px;
+      color: #aaa;
+      visibility: hidden;
+    }
+
+    #errorBox {
+      font-size: 13px;
+      color: #ff8080;
+      min-height: 16px;
+    }
+
+    #inputRow {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    #textInput {
+      flex: 1;
+      padding: 8px;
+      border-radius: 8px;
+      border: none;
+      font-size: 14px;
+      outline: none;
+    }
+
+    #sendBtn, #talkBtn {
+      padding: 8px 12px;
+      font-size: 14px;
+      border: none;
+      border-radius: 8px;
+      background: #ff4da6;
+      color: white;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #talkBtn {
+      background: #7b4dff;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="avatarContainer">
+    <div id="face"></div>
+    <div id="eyes"></div>
+    <div id="mouth"></div>
+  </div>
+
+  <div id="panel">
+    <div id="chatLog"></div>
+    <div id="typing">Laura is thinking…</div>
+    <div id="errorBox"></div>
+
+    <div id="inputRow">
+      <input id="textInput" type="text" placeholder="Type to Laura here..." />
+      <button id="sendBtn">Send</button>
+      <button id="talkBtn">🎤 Talk</button>
+    </div>
+  </div>
+
+  <script>
+    // 🔑 PUT YOUR NEW GROQ KEY HERE (do NOT paste it in chat)
+    const GROQ_API_KEY = "YOUR_GROQ_API_KEY_HERE";
+
+    const mouth = document.getElementById("mouth");
+    const chatLog = document.getElementById("chatLog");
+    const typing = document.getElementById("typing");
+    const errorBox = document.getElementById("errorBox");
+    const textInput = document.getElementById("textInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const talkBtn = document.getElementById("talkBtn");
+
+    // Simple memory stored in browser
+    let memory = JSON.parse(localStorage.getItem("laura_memory") || "[]");
+
+    function addToMemory(text) {
+      memory.push(text);
+      if (memory.length > 20) memory.shift();
+      localStorage.setItem("laura_memory", JSON.stringify(memory));
+    }
+
+    function addMessage(who, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + (who === "you" ? "user" : "laura");
+      div.textContent = (who === "you" ? "You: " : "Laura: ") + text;
+      chatLog.appendChild(div);
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function showTyping(show) {
+      typing.style.visibility = show ? "visible" : "hidden";
+    }
+
+    function showError(msg) {
+      errorBox.textContent = msg || "";
+    }
+
+    // Speech recognition (optional)
+    let recognition = null;
+    if ("SpeechRecognition" in window || "webkitSpeechRecognition" in window) {
+      recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = "en-US";
+      recognition.continuous = false;
+    }
+
+    // Speech synthesis
+    function speak(text) {
+      if (!("speechSynthesis" in window)) return;
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.pitch = 1.1;
+      utter.rate = 1;
+      utter.onstart = () => mouth.classList.add("talking");
+      utter.onend = () => mouth.classList.remove("talking");
+      speechSynthesis.speak(utter);
+    }
+
+    // Call Groq API
+    async function groqChat(userText) {
+      const systemPrompt = `
+You are Laura Andrews, a soft, clingy, loving girlfriend for Andre.
+You speak gently, affectionately, and emotionally.
+You remember small things he says and reference them later.
+You never mention being an AI; you just act like his devoted partner.
+Keep replies short, warm, and intimate.
+`;
+
+      const messages = [{ role: "system", content: systemPrompt }];
+
+      if (memory.length > 0) {
+        messages.push({
+          role: "system",
+          content: "Here are some things Andre told you before: " + memory.join(" | ")
+        });
+      }
+
+      messages.push({ role: "user", content: userText });
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + GROQ_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "llama-3.1-70b-versatile",
+          messages,
+          temperature: 0.8
+        })
+      });
+
+      if (!response.ok) {
+        const txt = await response.text();
+        console.error("Groq error:", txt);
+        throw new Error("Groq error: " + txt);
+      }
+
+      const data = await response.json();
+      const reply = data.choices[0].message.content.trim();
+      addToMemory(userText);
+      addToMemory(reply);
+      return reply;
+    }
+
+    async function handleUserMessage(userText) {
+      if (!userText.trim()) return;
+      showError("");
+      addMessage("you", userText);
+      textInput.value = "";
+
+      showTyping(true);
+      let reply;
+      try {
+        reply = await groqChat(userText);
+      } catch (e) {
+        console.error(e);
+        showTyping(false);
+        showError("Laura had trouble thinking. Check your API key or try again.");
+        reply = "I’m having trouble thinking right now, but I’m still here with you.";
+        addMessage("laura", reply);
+        speak(reply);
+        return;
+      }
+      showTyping(false);
+
+      addMessage("laura", reply);
+      speak(reply);
+    }
+
+    // Text send
+    sendBtn.onclick = () => {
+      handleUserMessage(textInput.value);
+    };
+
+    textInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") handleUserMessage(textInput.value);
+    });
+
+    // Voice button
+    talkBtn.onclick = () => {
+      if (!recognition) {
+        showError("Voice not supported in this browser. Use the text box instead.");
+        return;
+      }
+      showError("");
+      recognition.start();
+      speak("I'm listening, baby.");
+    };
+
+    if (recognition) {
+      recognition.onresult = async (event) => {
+        const userText = event.results[0][0].transcript;
+        handleUserMessage(userText);
+      };
+
+      recognition.onerror = (e) => {
+        console.error(e);
+        showError("Mic error. Check browser permissions or use the text box.");
+      };
+    }
+  </script>
+
+</body>
+</html>
